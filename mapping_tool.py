@@ -19,6 +19,8 @@ Contrôles :
   - Touche 'a'  : ajoute un masque (clic droit pour dessiner un polygone
                   de zones à ne PAS projeter — utile pour découper autour
                   d'une fenêtre, une porte, etc.)
+  - Touche 'b'  : affiche/masque la webcam en fond d'écran (active la
+                  webcam index 0 si --background n'a pas été fourni)
   - Touche 'q' ou ESC : quitter
 
 Usage :
@@ -294,16 +296,18 @@ def main():
 
     fullscreen = False
     edit_mode = True
+    show_background = bg_reader is not None
     last_save_msg_time = 0
 
     print("Outil lancé. Fenêtre :", window)
-    print("Touches : g=grille  f=plein écran  s=sauver  l=charger  r=reset  e=mode édition on/off  q=quitter")
+    print("Touches : g=grille  f=plein écran  s=sauver  l=charger  r=reset  "
+          "e=mode édition on/off  b=fond webcam on/off  q=quitter")
 
     while True:
         frame = reader.read()
         warped = warper.warp(frame)
 
-        if bg_reader is not None:
+        if bg_reader is not None and show_background:
             bg_frame = bg_reader.read()
             mask = warper.quad_mask()
             canvas = np.where(mask[:, :, None] > 0, warped, bg_frame).astype(np.uint8)
@@ -339,6 +343,17 @@ def main():
             warper.reset()
         elif key == ord('e'):
             edit_mode = not edit_mode
+        elif key == ord('b'):
+            if bg_reader is None:
+                try:
+                    bg_reader = SourceReader(0, args.width, args.height)
+                    show_background = True
+                    print("Webcam (index 0) activée en fond.")
+                except Exception as e:
+                    print(f"Impossible d'activer la webcam en fond : {e}", file=sys.stderr)
+            else:
+                show_background = not show_background
+                print("Fond", "activé" if show_background else "désactivé")
 
     reader.release()
     if bg_reader is not None:
