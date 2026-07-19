@@ -24,7 +24,12 @@ venv/bin/python3.12 ./mapping_tool.py --source video.mp4            # fichier vi
 venv/bin/python3.12 ./mapping_tool.py --source image.jpg            # image fixe
 venv/bin/python3.12 ./mapping_tool.py --source 0                    # webcam (index 0)
 venv/bin/python3.12 ./mapping_tool.py --width 1920 --height 1080    # taille de sortie
+venv/bin/python3.12 ./mapping_tool.py --background 0                # webcam en fond d'écran
 ```
+
+L'option `--background` accepte les mêmes types de valeur que `--source` (chemin
+vidéo/image, index webcam). Le fond s'affiche partout, et la source
+(`--source`) n'est projetée que dans le quadrilatère.
 
 ## Contrôles
 

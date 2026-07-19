@@ -27,6 +27,9 @@ Usage :
   python3 mapping_tool.py --source image.jpg    # image fixe
   python3 mapping_tool.py --source 0            # webcam (index 0)
   python3 mapping_tool.py --width 1920 --height 1080  # taille de sortie
+  python3 mapping_tool.py --background 0        # webcam en fond d'écran,
+                                                 # la source projetée ne
+                                                 # recouvre que le quad
 """
 
 import argparse
@@ -201,6 +204,14 @@ class QuadWarper:
         H = self.homography(w, h)
         return cv2.warpPerspective(frame, H, (self.canvas_w, self.canvas_h))
 
+    def quad_mask(self):
+        """Masque binaire (canvas_h, canvas_w) : 255 à l'intérieur du
+        quadrilatère actuel, 0 ailleurs. Sert à composer la source projetée
+        par-dessus un fond d'écran (ex : webcam)."""
+        mask = np.zeros((self.canvas_h, self.canvas_w), dtype=np.uint8)
+        cv2.fillConvexPoly(mask, self.corners.astype(np.int32), 255)
+        return mask
+
     def draw_overlay(self, canvas):
         """Dessine les poignées et la grille de calibration par-dessus le
         rendu. À utiliser seulement en mode édition, pas en sortie finale."""
@@ -254,12 +265,18 @@ def main():
     parser = argparse.ArgumentParser(description="Simulateur de vidéo-mapping — warping quad")
     parser.add_argument("--source", default=None,
                          help="Chemin vidéo/image, index webcam (0,1,...), ou vide = motif de test")
+    parser.add_argument("--background", default=None,
+                         help="Chemin vidéo/image ou index webcam (0,1,...) à afficher en fond "
+                              "d'écran ; la source projetée ne recouvre que le quadrilatère")
     parser.add_argument("--width", type=int, default=1280, help="Largeur de sortie")
     parser.add_argument("--height", type=int, default=720, help="Hauteur de sortie")
     args = parser.parse_args()
 
     try:
         reader = SourceReader(args.source, args.width, args.height)
+        bg_reader = None
+        if args.background is not None:
+            bg_reader = SourceReader(args.background, args.width, args.height)
     except Exception as e:
         print(f"Erreur source : {e}", file=sys.stderr)
         sys.exit(1)
@@ -283,7 +300,12 @@ def main():
         frame = reader.read()
         warped = warper.warp(frame)
 
-        canvas = warped.copy()
+        if bg_reader is not None:
+            bg_frame = bg_reader.read()
+            mask = warper.quad_mask()
+            canvas = np.where(mask[:, :, None] > 0, warped, bg_frame).astype(np.uint8)
+        else:
+            canvas = warped.copy()
         if edit_mode:
             warper.draw_overlay(canvas)
             if time.time() - last_save_msg_time < 1.5:
@@ -316,6 +338,8 @@ def main():
             edit_mode = not edit_mode
 
     reader.release()
+    if bg_reader is not None:
+        bg_reader.release()
     cv2.destroyAllWindows()
 
 
