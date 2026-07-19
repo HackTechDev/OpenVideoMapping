@@ -285,7 +285,10 @@ def main():
     warper.load()  # recharge un calibrage existant si présent
 
     window = "Video-Mapping Simulator"
-    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+    # WINDOW_GUI_NORMAL désactive la barre d'outils/le menu contextuel Qt
+    # natifs d'OpenCV (pan/zoom/enregistrer...) : leurs tooltips n'affichent
+    # pas de texte sur ce système, et l'outil a ses propres contrôles clavier.
+    cv2.namedWindow(window, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
     cv2.resizeWindow(window, args.width, args.height)
     cv2.setMouseCallback(window, warper.on_mouse)
 
