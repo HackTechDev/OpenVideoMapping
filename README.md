@@ -43,6 +43,7 @@ vidéo/image, index webcam). Le fond s'affiche partout, et la source
 | `l` | Recharge le calibrage depuis `calibration.json` |
 | `r` | Réinitialise les coins (quad = plein écran) |
 | `b` | Affiche/masque le fond webcam (active la webcam index 0 si `--background` n'a pas été fourni) |
+| `p` | Affiche/masque un effet de pluie (les gouttes tombent du haut et contournent le quadrilatère) |
 | `q` / `Esc` | Quitter |
 
 Le calibrage sauvegardé (`calibration.json`) contient les coordonnées des 4

@@ -21,6 +21,8 @@ Contrôles :
                   d'une fenêtre, une porte, etc.)
   - Touche 'b'  : affiche/masque la webcam en fond d'écran (active la
                   webcam index 0 si --background n'a pas été fourni)
+  - Touche 'p'  : affiche/masque un effet de pluie (les gouttes tombent
+                  du haut et contournent le quadrilatère de projection)
   - Touche 'q' ou ESC : quitter
 
 Usage :
@@ -263,6 +265,121 @@ class QuadWarper:
         return True
 
 
+class RainEffect:
+    """Simule des gouttes de pluie tombant depuis le haut du canvas. Une
+    goutte qui atteint la zone du quadrilatère de projection le contourne
+    (glisse vers le bord le plus proche) au lieu de tomber dessus."""
+
+    DROP_COLOR = (235, 206, 135)  # bleu clair (BGR)
+    AVOID_MARGIN = 40  # px : distance au-delà du bord réel à partir de
+                        # laquelle une goutte commence déjà à dévier, pour
+                        # avoir le temps de sortir avant d'atteindre le bord
+
+    def __init__(self, canvas_w, canvas_h, num_drops=150):
+        self.canvas_w = canvas_w
+        self.canvas_h = canvas_h
+        self.num_drops = num_drops
+        self.x = np.random.uniform(0, canvas_w, num_drops).astype(np.float32)
+        self.y = np.random.uniform(-canvas_h, 0, num_drops).astype(np.float32)
+        self.speed = np.random.uniform(6, 14, num_drops).astype(np.float32)
+        self.length = np.random.uniform(8, 20, num_drops).astype(np.float32)
+
+    def _respawn(self, i):
+        self.x[i] = np.random.uniform(0, self.canvas_w)
+        self.y[i] = np.random.uniform(-40, 0)
+        self.speed[i] = np.random.uniform(6, 14)
+        self.length[i] = np.random.uniform(8, 20)
+
+    @staticmethod
+    def _expand_polygon(corners, margin):
+        """Agrandit le quadrilatère de `margin` pixels vers l'extérieur, en
+        éloignant chaque coin du centroïde le long de sa direction."""
+        centroid = corners.mean(axis=0)
+        directions = corners - centroid
+        norms = np.linalg.norm(directions, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        return (corners + directions / norms * margin).astype(np.float32)
+
+    @staticmethod
+    def _nearest_edge_vectors(point, corners):
+        """Tangente et normale extérieure (unitaires) de l'arête du quad la
+        plus proche du point. Utilisées pour dévier une goutte en suivant
+        l'inclinaison réelle de cette arête, plutôt qu'un simple choix
+        gauche/droite indépendant de l'orientation du quadrilatère."""
+        p = np.array(point, dtype=np.float32)
+        centroid = corners.mean(axis=0)
+        n = len(corners)
+        best_dist = None
+        best_tangent = np.array([1.0, 0.0], dtype=np.float32)
+        best_normal = np.array([0.0, -1.0], dtype=np.float32)
+        for i in range(n):
+            a, b = corners[i], corners[(i + 1) % n]
+            edge = b - a
+            edge_len = float(np.linalg.norm(edge))
+            if edge_len < 1e-6:
+                continue
+            edge_dir = edge / edge_len
+            t = np.clip(np.dot(p - a, edge_dir), 0, edge_len)
+            closest = a + edge_dir * t
+            dist = float(np.linalg.norm(p - closest))
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                normal = np.array([edge_dir[1], -edge_dir[0]], dtype=np.float32)
+                if np.dot(normal, centroid - closest) > 0:
+                    normal = -normal  # doit pointer vers l'extérieur
+                best_tangent = edge_dir
+                best_normal = normal
+        return best_tangent, best_normal
+
+    def update(self, corners):
+        """corners : les 4 coins du quad (QuadWarper.corners) à contourner."""
+        zone = self._expand_polygon(corners, self.AVOID_MARGIN)
+        min_x, max_x = float(zone[:, 0].min()), float(zone[:, 0].max())
+        min_y, max_y = float(zone[:, 1].min()), float(zone[:, 1].max())
+        fall = np.array([0.0, 1.0], dtype=np.float32)
+
+        for i in range(self.num_drops):
+            x, y = float(self.x[i]), float(self.y[i])
+            approaching = False
+            if min_x <= x <= max_x and min_y <= y <= max_y:
+                approaching = cv2.pointPolygonTest(zone, (x, y), False) >= 0
+
+            if approaching:
+                # Contourne l'obstacle en suivant la pente de l'arête la
+                # plus proche (tangente), tout en s'écartant légèrement vers
+                # l'extérieur (normale) pour ne pas longer indéfiniment le
+                # bord. La tangente dépend de l'inclinaison réelle du quad.
+                tangent, normal = self._nearest_edge_vectors((x, y), corners)
+                along = tangent * float(np.dot(fall, tangent))
+                if np.dot(along, fall) < 0:
+                    along = -along  # garder une progression vers le bas
+                move = along + normal * 0.5
+                move_norm = float(np.linalg.norm(move))
+                if move_norm > 1e-6:
+                    move = move / move_norm
+                self.x[i] += move[0] * self.speed[i]
+                self.y[i] += move[1] * self.speed[i]
+            else:
+                self.y[i] += self.speed[i]
+
+            if self.y[i] > self.canvas_h or self.x[i] < -20 or self.x[i] > self.canvas_w + 20:
+                self._respawn(i)
+
+    def draw(self, canvas, quad_mask=None):
+        """quad_mask : masque binaire (QuadWarper.quad_mask()) de la zone à
+        ne jamais recouvrir, en filet de sécurité si une goutte a quand même
+        franchi la zone tampon (vitesse élevée, coin déplacé brutalement...)."""
+        overlay = np.zeros_like(canvas)
+        for i in range(self.num_drops):
+            x, y = int(self.x[i]), int(self.y[i])
+            y2 = int(y - self.length[i])
+            cv2.line(overlay, (x, y2), (x, y), self.DROP_COLOR, 1, cv2.LINE_AA)
+        if quad_mask is not None:
+            overlay[quad_mask > 0] = 0
+        drawn = np.any(overlay != 0, axis=2)
+        canvas[drawn] = overlay[drawn]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Simulateur de vidéo-mapping — warping quad")
     parser.add_argument("--source", default=None,
@@ -297,11 +414,13 @@ def main():
     fullscreen = False
     edit_mode = True
     show_background = bg_reader is not None
+    show_rain = False
+    rain = RainEffect(args.width, args.height)
     last_save_msg_time = 0
 
     print("Outil lancé. Fenêtre :", window)
     print("Touches : g=grille  f=plein écran  s=sauver  l=charger  r=reset  "
-          "e=mode édition on/off  b=fond webcam on/off  q=quitter")
+          "e=mode édition on/off  b=fond webcam on/off  p=pluie on/off  q=quitter")
 
     while True:
         frame = reader.read()
@@ -319,6 +438,10 @@ def main():
                 cv2.putText(canvas, "Calibrage sauvegarde -> calibration.json",
                             (20, args.height - 20), cv2.FONT_HERSHEY_SIMPLEX,
                             0.6, (255, 255, 255), 2, cv2.LINE_AA)
+
+        if show_rain:
+            rain.update(warper.corners)
+            rain.draw(canvas, warper.quad_mask())
 
         cv2.imshow(window, canvas)
         key = cv2.waitKey(16) & 0xFF
@@ -354,6 +477,9 @@ def main():
             else:
                 show_background = not show_background
                 print("Fond", "activé" if show_background else "désactivé")
+        elif key == ord('p'):
+            show_rain = not show_rain
+            print("Pluie", "activée" if show_rain else "désactivée")
 
     reader.release()
     if bg_reader is not None:
